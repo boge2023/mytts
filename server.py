@@ -67,6 +67,7 @@ class ResponseSpkList(ResponseBase):
 class RequestT2S(BaseModel):
     text: str
     speaker_id: str
+    speed: float
 
 
 def task_wrapper(func: callable, process_pool: ProcessPoolBase, *_args):
@@ -96,11 +97,11 @@ def create_app_core(process_pool: ProcessPoolBase, args):
     
     @fast_api.post(f"{args.api_prefix}/t2s", response_model=ResponseWave)
     async def fast_api_t2s(req: RequestT2S):
-        return await submit_task_wait_result(ProcessJobVITSApi.api_t2s, req.text, req.speaker_id)
+        return await submit_task_wait_result(ProcessJobVITSApi.api_t2s, req.text, req.speaker_id, req.speed)
     
     @fast_api.post(f"{args.api_prefix}/t2s_bin", response_model=ResponseFile)
     async def fast_api_t2s_bin(req: RequestT2S):
-        return await submit_task_wait_result(ProcessJobVITSApi.api_t2s_bin, req.text, req.speaker_id)
+        return await submit_task_wait_result(ProcessJobVITSApi.api_t2s_bin, req.text, req.speaker_id, req.speed)
     
     print(f"create app pid={os.getpid()}, thread_id={threading.get_ident()}, api_prefix={args.api_prefix}")
 

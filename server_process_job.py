@@ -1,4 +1,5 @@
 import datetime
+import re
 import json
 import os
 import threading
@@ -7,6 +8,7 @@ import base64
 import threading
 import traceback
 import soundfile as sf
+import numpy as np
 import torch
 import commons
 
@@ -68,6 +70,15 @@ class ProcessJobVITS(ProcessJobBase):
         self.hps = hps
         self.device = device    
 
+    def __cut_sentence(para):
+        para = re.sub("([。！;？\?])([^”’])", r"\1\n\2", para)  # 单字符断句符
+        para = re.sub("(\.{6})([^”’])", r"\1\n\2", para)  # 英文省略号
+        para = re.sub("(\…{2})([^”’])", r"\1\n\2", para)  # 中文省略号
+        para = re.sub("(\…{1})([^”’])", r"\1\n\2", para)  # 中文省略号
+        para = re.sub("([。！？\?][”’])([^，。！？\?])", r"\1\n\2", para)
+        para = para.rstrip()  # 段尾如果有多余的\n就去掉它
+        return para.split("\n")
+
     def __get_text(self, text):
         text_norm = text_to_sequence(text, self.hps.data.text_cleaners)
         if self.hps.data.add_blank:
@@ -76,15 +87,21 @@ class ProcessJobVITS(ProcessJobBase):
         return text_norm
 
     def _t2s(self, text, speaker_id, speed=1.0):
-        stn_tst = self.__get_text(text)
-        with no_grad():
-            x_tst = stn_tst.unsqueeze(0).to(self.device)
-            x_tst_lengths = LongTensor([stn_tst.size(0)]).to(self.device)
-            sid = LongTensor([speaker_id]).to(self.device)
-            audio = self.vits.infer(x_tst, x_tst_lengths, sid=sid, noise_scale=.667, noise_scale_w=0.8,
-                                length_scale=1.0 / speed)[0][0, 0].data.cpu().float().numpy()
-        del stn_tst, x_tst, x_tst_lengths, sid
-        return self.hps.data.sampling_rate, audio
+        texts = self.__cut_sentence(text)
+        audio_list = []
+        for text in texts:
+            stn_tst = self.__get_text(text)
+            with no_grad():
+                x_tst = stn_tst.unsqueeze(0).to(self.device)
+                x_tst_lengths = LongTensor([stn_tst.size(0)]).to(self.device)
+                sid = LongTensor([speaker_id]).to(self.device)
+                audio = self.vits.infer(x_tst, x_tst_lengths, sid=sid, noise_scale=.667, noise_scale_w=0.8,
+                                    length_scale=1.0 / speed)[0][0, 0].data.cpu().float().numpy()
+                audio_list.append(audio)
+                silence = np.zeros((int)(22050 * 0.5 / speed))
+                audio_list.append(silence)
+            del stn_tst, x_tst, x_tst_lengths, sid
+        return self.hps.data.sampling_rate, np.concatenate(audio_list)
 
 
 class ProcessJobVITSApi(ProcessJobVITS):
@@ -104,12 +121,12 @@ class ProcessJobVITSApi(ProcessJobVITS):
         return ProcessJobVITSApi.instance.thread_pool.submit(ProcessJobVITSApi.pipe_send_wrapper, func, pipe_conn, *_args)
     
     @staticmethod
-    def api_t2s(text: str, speaker_id: str) -> dict:
-        return ProcessJobVITSApi.instance.__api_t2s(text, speaker_id)
+    def api_t2s(text: str, speaker_id: str, speed: float) -> dict:
+        return ProcessJobVITSApi.instance.__api_t2s(text, speaker_id, speed)
     
     @staticmethod
-    def api_t2s_bin(text: str, speaker_id: str) -> dict:
-        return ProcessJobVITSApi.instance.__api_t2s_bin(text, speaker_id)
+    def api_t2s_bin(text: str, speaker_id: str, speed: float) -> dict:
+        return ProcessJobVITSApi.instance.__api_t2s_bin(text, speaker_id, speed)
     
     @staticmethod
     def api_get_speakers() -> dict:
