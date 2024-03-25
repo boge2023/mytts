@@ -70,7 +70,7 @@ class ProcessJobVITS(ProcessJobBase):
         self.hps = hps
         self.device = device    
 
-    def __cut_sentence(para):
+    def __cut_sentence(self, para):
         para = re.sub("([。！;？\?])([^”’])", r"\1\n\2", para)  # 单字符断句符
         para = re.sub("(\.{6})([^”’])", r"\1\n\2", para)  # 英文省略号
         para = re.sub("(\…{2})([^”’])", r"\1\n\2", para)  # 中文省略号
