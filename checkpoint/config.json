@@ -34,6 +34,11 @@
       "n_layers_q": 3,
       "use_spectral_norm": false,
       "gin_channels": 256
+    },
+    "asr": {
+      "asr_path": "checkpoint/speech_paraformer-large_asr_nat-zh-cn-16k-common-vocab8404-pytorch",
+      "vad_path": "checkpoint/speech_fsmn_vad_zh-cn-16k-common-pytorch",
+      "punc_path": "checkpoint/punc_ct-transformer_zh-cn-common-vocab272727-pytorch"
     }
   }
   

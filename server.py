@@ -6,7 +6,7 @@ import threading
 import argparse
 import time
 
-from fastapi import FastAPI
+from fastapi import FastAPI, UploadFile
 from pydantic import BaseModel
 from uvicorn import run
 from typing import Type
@@ -14,6 +14,8 @@ from typing import Type
 from server_process_job import ProcessJobBase, ProcessJobVITSApi
 from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor
 
+from tempfile import NamedTemporaryFile
+import uuid
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--port", type=int, default=36901, help="The port to listen on")
@@ -21,7 +23,8 @@ parser.add_argument("--host", default="0.0.0.0", help="The host address to bind 
 parser.add_argument("--max-workers", type=int, default=1, help="worker num")
 parser.add_argument("--config", type=str, default="./checkpoint/config.json", help='JSON file for configuration')
 parser.add_argument("--model", type=str, default="./checkpoint/G.pth", required=True, help='Model name')
-parser.add_argument("--api-prefix", type=str, default="tts", required=True, help='Model name')
+parser.add_argument("--api-prefix", type=str, default="/tts", required=True, help='Model name')
+parser.add_argument("--asr-prefix", type=str, default="/asr", required=True, help='Model name')
 parser.add_argument("--thread-num-per-worker", type=int, default=3, help="thread num per worker")
 args = parser.parse_args()
 
@@ -70,6 +73,10 @@ class RequestT2S(BaseModel):
     speed: float
 
 
+class ResponseS2T(ResponseBase):
+    text: str    
+
+
 def task_wrapper(func: callable, process_pool: ProcessPoolBase, *_args):
     return process_pool.submit(func, *_args).result()
 
@@ -91,9 +98,18 @@ def create_app_core(process_pool: ProcessPoolBase, args):
         result = await asyncio.get_event_loop().run_in_executor(thread_pool_for_fetch_data, pipe_pair[0].recv)
         pipe_pair_queue.put(pipe_pair)
         return result
+
     @fast_api.get(f"{args.api_prefix}/speakers", response_model=ResponseSpkList)
     async def fast_api_get_speakers():
         return await asyncio.get_event_loop().run_in_executor(process_pool, ProcessJobVITSApi.api_get_speakers)
+
+    @fast_api.post(f"{args.asr_prefix}/s2t", response_model=ResponseS2T)
+    async def fast_api_t2s(audio: UploadFile):
+        unique_filename = f"{uuid.uuid4()}"
+        with NamedTemporaryFile(delete=False, prefix=unique_filename) as temp_file:
+            temp_file.write(await audio.read())
+            print("temp_file", temp_file.name)
+        return await submit_task_wait_result(ProcessJobVITSApi.api_s2t, temp_file.name)
     
     @fast_api.post(f"{args.api_prefix}/t2s", response_model=ResponseWave)
     async def fast_api_t2s(req: RequestT2S):

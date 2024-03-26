@@ -1,6 +1,4 @@
-import datetime
 import re
-import json
 import os
 import threading
 import traceback
@@ -17,6 +15,7 @@ from io import BytesIO
 from concurrent.futures import ThreadPoolExecutor
 from fastapi import status
 from torch import no_grad, LongTensor
+from funasr import AutoModel
 
 import utils
 from models import SynthesizerTrn
@@ -49,10 +48,6 @@ class ProcessJobVITS(ProcessJobBase):
     def load_t2s_model(task_id):
         ProcessJobVITS.instance._load_t2s_model()
     
-    @staticmethod
-    def t2s_inference_func(*infer_args):
-        return ProcessJobVITS.instance._t2s_inference_func(*infer_args)
-    
     def _load_t2s_model(self):
         device = "cuda:0" if torch.cuda.is_available() else "cpu"
         hps = utils.get_hparams_from_file(self.args.config)
@@ -69,6 +64,12 @@ class ProcessJobVITS(ProcessJobBase):
         print("speaker", self.speakers)
         self.hps = hps
         self.device = device    
+
+        self.asr_model = AutoModel(model=hps.asr.asr_path, model_revision="v2.0.4",
+                                   vad_model=hps.asr.vad_path,
+                                   vad_model_revision="v2.0.4",
+                                   punc_model=hps.asr.punc_path,
+                                   punc_model_revision="v2.0.4")
 
     def __cut_sentence(self, para):
         para = re.sub("([。！;？\?])([^”’])", r"\1\n\2", para)  # 单字符断句符
@@ -102,6 +103,15 @@ class ProcessJobVITS(ProcessJobBase):
                 audio_list.append(silence)
             del stn_tst, x_tst, x_tst_lengths, sid
         return self.hps.data.sampling_rate, np.concatenate(audio_list)
+    
+    def _s2t(self, audio_path):
+        try:
+            result = self.asr_model.generate(input=audio_path)
+            return result[0]["text"]
+        except Exception as e:
+            print(f"func: _s2t, error: {str(e)}")
+            traceback.print_exc()
+            return None
 
 
 class ProcessJobVITSApi(ProcessJobVITS):
@@ -121,6 +131,10 @@ class ProcessJobVITSApi(ProcessJobVITS):
         return ProcessJobVITSApi.instance.thread_pool.submit(ProcessJobVITSApi.pipe_send_wrapper, func, pipe_conn, *_args)
     
     @staticmethod
+    def api_s2t(audio_path: str) -> dict:
+        return ProcessJobVITSApi.instance.__api_s2t(audio_path)
+
+    @staticmethod
     def api_t2s(text: str, speaker_id: str, speed: float) -> dict:
         return ProcessJobVITSApi.instance.__api_t2s(text, speaker_id, speed)
     
@@ -131,6 +145,23 @@ class ProcessJobVITSApi(ProcessJobVITS):
     @staticmethod
     def api_get_speakers() -> dict:
         return ProcessJobVITSApi.instance.__api_get_speakers()
+
+    def __api_s2t(self, audio_path: str) -> dict:
+        print(f"api_s2t, pid={os.getpid()}, thread_id={threading.get_ident()}")
+        try:
+            text = self._s2t(audio_path)
+            Path(audio_path).unlink()
+            return {
+                "code": status.HTTP_200_OK,
+                "text": text
+            }
+        except Exception as e:
+            print(f"func: api_s2t, error: {str(e)}")
+            traceback.print_exc()
+            return {
+                "code": status.HTTP_500_INTERNAL_SERVER_ERROR,
+                "message": str(e)
+            }    
     
     def __api_t2s(self, text: str, speaker_id: str, speed=1.0) -> dict:
         print(f"api_t2s spk_name={speaker_id}, text={text}, pid={os.getpid()}, thread_id={threading.get_ident()}")
