@@ -12,3 +12,4 @@ jieba==0.42.1
 cn2an==0.5.22
 funasr>=1.0.0
 modelscope==1.10.0
+python-multipart==0.0.6
